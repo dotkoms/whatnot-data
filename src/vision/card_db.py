@@ -101,6 +101,18 @@ def download_card_images(api_key: str = None, max_pages: int = None):
                 )
                 resp.raise_for_status()
                 break
+            except requests.exceptions.HTTPError as e:
+                if e.response is not None and e.response.status_code == 404:
+                    logger.info(f"Page {page} returned 404 — end of database reached")
+                    conn.close()
+                    logger.info("Card database built")
+                    return
+                logger.warning(f"Page {page} attempt {attempt}/{max_retries} failed: {e}")
+                if attempt == max_retries:
+                    logger.error(f"Giving up on page {page} after {max_retries} attempts")
+                    conn.close()
+                    return
+                time.sleep(2 ** attempt)
             except Exception as e:
                 logger.warning(f"Page {page} attempt {attempt}/{max_retries} failed: {e}")
                 if attempt == max_retries:
