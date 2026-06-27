@@ -1,16 +1,15 @@
 """
-Entry point: single stream monitor → card identification → Discord + SQLite.
+Entry point: single stream monitor → card identification → SQLite.
 
 Usage:
-    python main.py <whatnot_stream_url> <seller_name>
+    python3 main.py <whatnot_stream_url> <seller_name>
 
 Example:
-    python main.py https://www.whatnot.com/live/abc123 SomeSellerName
+    python3 main.py https://www.whatnot.com/live/abc123 SomeSellerName
 
 Requires:
     - data/session/ Firefox session (run scripts/intercept_ws.py once to log in)
     - data/cards.db  (run scripts/build_card_db.py first)
-    - .env with DISCORD_BOT_TOKEN, DISCORD_CHANNEL_ID
 """
 
 import asyncio
@@ -22,7 +21,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
 
-from src.discord.bot import AuctionBot
 from src.vision.card_db import init_db
 from src.vision.frame_extractor import FrameExtractor
 from src.vision.hls_interceptor import HLSInterceptor
@@ -49,7 +47,7 @@ async def _ensure_logged_in(page):
         await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
 
     if "login" in page.url or "verify" in page.url:
-        logger.warning("Not logged in — open the browser window and log in manually (including SMS code).")
+        logger.warning("Not logged in — log in manually in the browser window (including SMS code).")
         while "login" in page.url or "verify" in page.url or "confirm" in page.url:
             await asyncio.sleep(1)
         logger.info(f"Logged in. URL: {page.url}")
@@ -61,9 +59,7 @@ async def run(stream_url: str, seller: str):
 
     init_db()
 
-    bot = AuctionBot()
     handler = AuctionEventHandler(
-        bot=bot,
         stream_url=stream_url,
         seller=seller,
         stream_id=stream_id,
@@ -111,13 +107,7 @@ async def run(stream_url: str, seller: str):
         )
         await client.connect()
 
-    async def discord_task():
-        await bot.start(os.environ["DISCORD_BOT_TOKEN"])
-
-    await bot.post_stream_live(seller=seller, stream_url=stream_url)
-
     await asyncio.gather(
-        discord_task(),
         ws_task(),
         browser_task(),
     )
@@ -125,8 +115,8 @@ async def run(stream_url: str, seller: str):
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("Usage: python main.py <stream_url> <seller_name>")
-        print("Example: python main.py https://www.whatnot.com/live/abc123 SellerName")
+        print("Usage: python3 main.py <stream_url> <seller_name>")
+        print("Example: python3 main.py https://www.whatnot.com/live/abc123 SellerName")
         sys.exit(1)
 
     asyncio.run(run(sys.argv[1], sys.argv[2]))

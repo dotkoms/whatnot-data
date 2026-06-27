@@ -1,5 +1,5 @@
 """
-Maps confirmed Whatnot Phoenix channel events to Discord bot calls.
+Maps confirmed Whatnot Phoenix channel events to console output + SQLite.
 
 Confirmed topics (from live traffic):
   auction:<stream_id>   — bid_placed, giveaway_entry_count_updated, etc.
@@ -23,8 +23,7 @@ _identifier = CardIdentifier()
 
 
 class AuctionEventHandler:
-    def __init__(self, bot, stream_url: str, seller: str, stream_id: str = ""):
-        self.bot = bot
+    def __init__(self, stream_url: str, seller: str, stream_id: str = ""):
         self.stream_url = stream_url
         self.seller = seller
         self.stream_id = stream_id
@@ -57,21 +56,13 @@ class AuctionEventHandler:
         self._current_image_key = media[0].get("key") if media else None
         self._current_listing_id = product.get("listingId") or product.get("id")
         starting_bid = (product.get("auctionMinimumCents") or 0) / 100
-        await self.bot.post_auction_start(
-            card_name=self._current_card,
-            starting_bid=starting_bid,
-            seller=self.seller,
-        )
+        logger.info(f"[AUCTION START] {self._current_card} | starting bid: ${starting_bid:.2f}")
 
     async def _on_bid(self, payload: dict):
         amount = (payload.get("priceCents") or payload.get("amount") or 0) / 100
         user = payload.get("user") or {}
         username = user.get("username") or payload.get("userId") or "unknown"
-        await self.bot.post_bid(
-            amount=amount,
-            username=username,
-            card_name=self._current_card,
-        )
+        logger.info(f"[BID] ${amount:.2f} by {username} on {self._current_card}")
 
     async def _on_auction_ended(self, payload: dict):
         product = payload.get("product", {})
@@ -100,8 +91,8 @@ class AuctionEventHandler:
         frame_path = (card_info or {}).get("crop_path") or self._last_frame_path
 
         logger.info(
-            f"[AUCTION ENDED] {identified_name} -> ${final_price:.2f} "
-            f"(method={identification_method} confidence={confidence:.2f})"
+            f"[SOLD] {identified_name} -> ${final_price:.2f} | buyer={buyer_username} "
+            f"bids={bid_count} method={identification_method} confidence={confidence:.2f}"
         )
 
         try:
@@ -122,15 +113,6 @@ class AuctionEventHandler:
         except Exception as e:
             logger.error(f"Failed to save auction result: {e}")
 
-        await self.bot.post_sold(
-            card_name=identified_name,
-            final_price=final_price,
-            seller=self.seller,
-            stream_url=self.stream_url,
-            buyer=buyer_username,
-            bid_count=bid_count,
-            image_key=self._current_image_key,
-        )
         self._current_card = None
         self._current_image_key = None
         self._current_listing_id = None
