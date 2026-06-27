@@ -11,18 +11,30 @@ Confirmed sold price flow:
 """
 
 import logging
+import time
 from typing import Optional
+
+from src.vision.card_identifier import CardIdentifier
+from src.vision.card_db import save_auction_result, init_db
 
 logger = logging.getLogger(__name__)
 
+_identifier = CardIdentifier()
+
 
 class AuctionEventHandler:
-    def __init__(self, bot, stream_url: str, seller: str):
+    def __init__(self, bot, stream_url: str, seller: str, stream_id: str = ""):
         self.bot = bot
         self.stream_url = stream_url
         self.seller = seller
+        self.stream_id = stream_id
         self._current_card: Optional[str] = None
         self._current_image_key: Optional[str] = None
+        self._current_listing_id: Optional[str] = None
+        self._last_frame_path: Optional[str] = None
+
+    def set_last_frame(self, frame_path: str):
+        self._last_frame_path = frame_path
 
     async def handle(self, topic: str, event: str, payload: dict):
         logger.info(f"[EVENT] topic={topic} event={event}")
@@ -43,6 +55,7 @@ class AuctionEventHandler:
         self._current_card = product.get("name")
         media = product.get("media") or []
         self._current_image_key = media[0].get("key") if media else None
+        self._current_listing_id = product.get("listingId") or product.get("id")
         starting_bid = (product.get("auctionMinimumCents") or 0) / 100
         await self.bot.post_auction_start(
             card_name=self._current_card,
@@ -65,6 +78,7 @@ class AuctionEventHandler:
         self._current_card = product.get("name", self._current_card)
         media = product.get("media") or []
         self._current_image_key = media[0].get("key") if media else self._current_image_key
+        listing_id = product.get("listingId") or product.get("id") or self._current_listing_id
 
         highest_bid = product.get("highestBid") or {}
         price_cents = product.get("soldPriceCents") or highest_bid.get("priceCents") or 0
@@ -74,8 +88,42 @@ class AuctionEventHandler:
         buyer_username = buyer.get("username", "unknown")
         bid_count = product.get("bidCount", 0)
 
+        card_info = await _identifier.identify(
+            frame_path=self._last_frame_path,
+            whatnot_image_key=self._current_image_key,
+        )
+
+        identified_name = (card_info or {}).get("name") or self._current_card
+        card_id = (card_info or {}).get("card_id")
+        confidence = (card_info or {}).get("confidence", 0.0)
+        identification_method = (card_info or {}).get("method", "none")
+        frame_path = (card_info or {}).get("crop_path") or self._last_frame_path
+
+        logger.info(
+            f"[AUCTION ENDED] {identified_name} -> ${final_price:.2f} "
+            f"(method={identification_method} confidence={confidence:.2f})"
+        )
+
+        try:
+            save_auction_result(
+                stream_id=self.stream_id,
+                listing_id=listing_id or "",
+                card_id=card_id,
+                card_name=identified_name or "",
+                sold_price_cents=price_cents,
+                buyer_username=buyer_username,
+                bid_count=bid_count,
+                seller_user_id=self.seller,
+                image_key=self._current_image_key,
+                confidence=confidence,
+                frame_path=frame_path,
+                ended_at=int(time.time()),
+            )
+        except Exception as e:
+            logger.error(f"Failed to save auction result: {e}")
+
         await self.bot.post_sold(
-            card_name=self._current_card,
+            card_name=identified_name,
             final_price=final_price,
             seller=self.seller,
             stream_url=self.stream_url,
@@ -85,6 +133,7 @@ class AuctionEventHandler:
         )
         self._current_card = None
         self._current_image_key = None
+        self._current_listing_id = None
 
     async def _on_payment_succeeded(self, payload: dict):
         product = payload.get("product", {})
