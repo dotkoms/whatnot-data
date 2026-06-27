@@ -16,8 +16,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-STREAM_URL = "https://www.whatnot.com/live/822a77d5-5fad-4de7-9036-e04229fc213e"
+STREAM_URL = "https://www.whatnot.com/live/0f68dac0-ced4-4c21-bf0a-f9b0b79b03d0"
 LOGIN_URL = "https://www.whatnot.com/login"
+
 
 IGNORE_HOSTS = ("sd-rtn.com", "agora.io")
 IGNORE_TOPICS = ("chat:", "phoenix")
@@ -34,59 +35,9 @@ def should_ignore(url, topic, event=""):
     return False
 
 
-async def login(page, email: str, password: str):
-    print(f"Logging in as {email} ...")
-    await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
-    await page.wait_for_timeout(3000)
-
-    inputs = await page.locator('input').all()
-    print(f"Found {len(inputs)} inputs on login page:")
-    for i, inp in enumerate(inputs):
-        t = await inp.get_attribute("type")
-        n = await inp.get_attribute("name")
-        p = await inp.get_attribute("placeholder")
-        print(f"  [{i}] type={t} name={n} placeholder={p}")
-
-    all_inputs = page.locator('input')
-    count = await all_inputs.count()
-    for i in range(count):
-        inp = all_inputs.nth(i)
-        t = await inp.get_attribute("type")
-        if t in ("email", "text", None):
-            await inp.fill(email)
-            print(f"Filled email into input[{i}]")
-            break
-
-    for i in range(count):
-        inp = all_inputs.nth(i)
-        t = await inp.get_attribute("type")
-        if t == "password":
-            await inp.fill(password)
-            print(f"Filled password into input[{i}]")
-            break
-
-    await page.wait_for_timeout(500)
-
-    submitted = False
-    for selector in ['button[type="submit"]', 'button:has-text("Sign in")', 'button:has-text("Log in")', 'button:has-text("Continue")']:
-        btn = page.locator(selector)
-        if await btn.count() > 0:
-            await btn.first.click()
-            print(f"Clicked: {selector}")
-            submitted = True
-            break
-
-    if not submitted:
-        await page.keyboard.press("Enter")
-        print("Pressed Enter to submit")
-
-    await page.wait_for_timeout(6000)
-    print(f"Login attempted, current URL: {page.url}\n")
-
-
 SESSION_DIR = os.path.join(os.path.dirname(__file__), "../data/session")
 
-async def intercept(stream_url: str, email: str = None, password: str = None):
+async def intercept(stream_url: str):
     async with async_playwright() as p:
         os.makedirs(SESSION_DIR, exist_ok=True)
         context = await p.firefox.launch_persistent_context(
@@ -95,9 +46,27 @@ async def intercept(stream_url: str, email: str = None, password: str = None):
         )
         page = context.pages[0] if context.pages else await context.new_page()
 
+        def _save_token(token: str):
+            env_path = os.path.join(os.path.dirname(__file__), "../.env")
+            with open(env_path, "r") as f:
+                lines = f.readlines()
+            with open(env_path, "w") as f:
+                for line in lines:
+                    if line.startswith("WHATNOT_AUTH_TOKEN="):
+                        f.write(f"WHATNOT_AUTH_TOKEN={token}\n")
+                        print(f"\n✅ Auth token saved to .env\n")
+                    else:
+                        f.write(line)
+
         def on_websocket(ws):
             if any(h in ws.url for h in IGNORE_HOSTS):
                 return
+            if "token=" in ws.url:
+                from urllib.parse import urlparse, parse_qs
+                qs = parse_qs(urlparse(ws.url).query)
+                token = (qs.get("token") or qs.get("vsn") or [None])[0]
+                if token and token != "2.0.0":
+                    _save_token(token)
             print(f"\n[WS OPENED] {ws.url}\n")
 
             def on_frame_sent(payload):
@@ -154,7 +123,5 @@ async def intercept(stream_url: str, email: str = None, password: str = None):
 
 
 if __name__ == "__main__":
-    email = os.environ.get("WHATNOT_EMAIL")
-    password = os.environ.get("WHATNOT_PASSWORD")
     url = sys.argv[1] if len(sys.argv) >= 2 else STREAM_URL
-    asyncio.run(intercept(url, email=email, password=password))
+    asyncio.run(intercept(url))

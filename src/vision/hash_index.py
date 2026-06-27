@@ -5,6 +5,7 @@ Instead of hitting SQLite on every auction_ended event, we load all 14k hashes
 into memory once and do in-process nearest-neighbor search.
 """
 
+import asyncio
 import logging
 import tempfile
 from pathlib import Path
@@ -26,6 +27,9 @@ class HashIndex:
         self._loaded = False
 
     def load(self, db_path: str):
+        if self._loaded:
+            logger.debug("HashIndex already loaded — skipping")
+            return
         import sqlite3
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
@@ -74,11 +78,12 @@ class HashIndex:
         logger.info(f"No hash match (best distance={best_distance})")
         return None
 
-    def find_from_whatnot_image(self, image_key: str) -> Optional[dict]:
+    async def find_from_whatnot_image(self, image_key: str) -> Optional[dict]:
         url = f"https://images.whatnot.com/{image_key}"
+        loop = asyncio.get_running_loop()
         tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
         try:
-            r = requests.get(url, timeout=15)
+            r = await loop.run_in_executor(None, lambda: requests.get(url, timeout=15))
             r.raise_for_status()
             tmp.write(r.content)
             tmp.flush()

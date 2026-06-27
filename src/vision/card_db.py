@@ -12,7 +12,6 @@ Flow:
   - At query time: compute pHash of captured frame, find nearest match
 """
 
-import hashlib
 import logging
 import os
 import sqlite3
@@ -41,6 +40,7 @@ def get_db() -> sqlite3.Connection:
 
 def init_db():
     conn = get_db()
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS cards (
             card_id     TEXT PRIMARY KEY,
@@ -71,6 +71,10 @@ def init_db():
             created_at      INTEGER DEFAULT (strftime('%s','now'))
         )
     """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_auction_results_ended_at ON auction_results(ended_at DESC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_auction_results_stream_id ON auction_results(stream_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_auction_results_card_name ON auction_results(card_name)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_cards_phash ON cards(phash) WHERE phash IS NOT NULL")
     conn.commit()
     conn.close()
     logger.info("DB initialized")
@@ -189,61 +193,6 @@ def _download_and_hash(card_id: str, image_url: str) -> Optional[str]:
         return None
 
 
-def find_card_by_hash(crop_img_path: str) -> Optional[dict]:
-    """Find the closest matching card by perceptual hash."""
-    try:
-        query_hash = imagehash.phash(Image.open(crop_img_path))
-    except Exception as e:
-        logger.error(f"Failed to hash query image: {e}")
-        return None
-
-    conn = get_db()
-    rows = conn.execute("SELECT card_id, name, set_name, number, image_url, phash FROM cards WHERE phash IS NOT NULL").fetchall()
-    conn.close()
-
-    best_match = None
-    best_distance = float("inf")
-
-    for row in rows:
-        try:
-            db_hash = imagehash.hex_to_hash(row["phash"])
-            distance = query_hash - db_hash
-            if distance < best_distance:
-                best_distance = distance
-                best_match = dict(row)
-        except Exception:
-            continue
-
-    if best_match and best_distance <= HASH_DISTANCE_THRESHOLD:
-        best_match["confidence"] = max(0.0, 1.0 - (best_distance / HASH_DISTANCE_THRESHOLD))
-        logger.info(f"Card match: {best_match['name']} distance={best_distance} confidence={best_match['confidence']:.2f}")
-        return best_match
-
-    logger.info(f"No match found (best distance={best_distance})")
-    return None
-
-
-def find_card_by_whatnot_image(image_key: str) -> Optional[dict]:
-    """
-    Use the Whatnot listing image directly (most accurate).
-    Download from whatnot-images CDN and hash match.
-    """
-    url = f"https://images.whatnot.com/{image_key}"
-    tmp_path = IMAGES_DIR / f"_whatnot_{hashlib.md5(image_key.encode()).hexdigest()}.jpg"
-
-    if not tmp_path.exists():
-        try:
-            r = requests.get(url, timeout=15)
-            r.raise_for_status()
-            with open(tmp_path, "wb") as f:
-                f.write(r.content)
-        except Exception as e:
-            logger.error(f"Failed to fetch Whatnot image: {e}")
-            return None
-
-    return find_card_by_hash(str(tmp_path))
-
-
 def save_auction_result(
     stream_id: str,
     listing_id: str,
@@ -259,15 +208,17 @@ def save_auction_result(
     ended_at: int,
 ):
     conn = get_db()
-    conn.execute("""
-        INSERT INTO auction_results
-        (stream_id, listing_id, card_id, card_name, sold_price_cents, buyer_username,
-         bid_count, seller_user_id, image_key, confidence, frame_path, ended_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-    """, (
-        stream_id, listing_id, card_id, card_name, sold_price_cents,
-        buyer_username, bid_count, seller_user_id, image_key,
-        confidence, frame_path, ended_at,
-    ))
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("""
+            INSERT INTO auction_results
+            (stream_id, listing_id, card_id, card_name, sold_price_cents, buyer_username,
+             bid_count, seller_user_id, image_key, confidence, frame_path, ended_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (
+            stream_id, listing_id, card_id, card_name, sold_price_cents,
+            buyer_username, bid_count, seller_user_id, image_key,
+            confidence, frame_path, ended_at,
+        ))
+        conn.commit()
+    finally:
+        conn.close()

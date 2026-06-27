@@ -7,6 +7,7 @@ Priority order:
   3. OCR fallback — read card name/number text from frame
 """
 
+import asyncio
 import logging
 import re
 from typing import Optional
@@ -31,23 +32,25 @@ class CardIdentifier:
     ) -> Optional[dict]:
 
         if whatnot_image_key:
-            result = self._index.find_from_whatnot_image(whatnot_image_key)
+            result = await self._index.find_from_whatnot_image(whatnot_image_key)
             if result:
                 result["method"] = "whatnot_image"
                 return result
 
         if frame_path:
-            crop = detect_card(frame_path)
-            if crop is not None:
-                crop_path = save_crop(crop, frame_path)
+            loop = asyncio.get_running_loop()
 
-                result = self._index.find(crop_path)
+            crop = await loop.run_in_executor(None, detect_card, frame_path)
+            if crop is not None:
+                crop_path = await loop.run_in_executor(None, save_crop, crop, frame_path)
+
+                result = await loop.run_in_executor(None, self._index.find, crop_path)
                 if result:
                     result["method"] = "phash"
                     result["crop_path"] = crop_path
                     return result
 
-                result = self._ocr_identify(crop_path)
+                result = await loop.run_in_executor(None, self._ocr_identify, crop_path)
                 if result:
                     result["method"] = "ocr"
                     result["crop_path"] = crop_path

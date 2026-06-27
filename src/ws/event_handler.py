@@ -16,7 +16,6 @@ from typing import Optional
 
 from src.vision.card_db import save_auction_result
 from src.vision.hash_index import HashIndex, get_index
-from src.vision.card_detector import detect_card, save_crop
 from src.vision.card_identifier import CardIdentifier
 
 logger = logging.getLogger(__name__)

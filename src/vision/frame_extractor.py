@@ -16,6 +16,8 @@ import cv2
 logger = logging.getLogger(__name__)
 
 FRAMES_DIR = Path(__file__).parent.parent.parent / "data" / "frames"
+FFMPEG_TIMEOUT = 30
+MAX_FRAMES_PER_STREAM = 120
 
 VIDEO_REGION_X = 0.0
 VIDEO_REGION_Y = 0.0
@@ -52,10 +54,18 @@ class FrameExtractor:
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            await proc.wait()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=FFMPEG_TIMEOUT)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                logger.warning(f"[{self.stream_id}] ffmpeg timed out after {FFMPEG_TIMEOUT}s — killed")
+                await asyncio.sleep(self.interval)
+                continue
 
             if frame_path.exists():
                 logger.info(f"Frame captured: {frame_path}")
+                self._rotate_frames()
                 if on_frame:
                     await on_frame(str(frame_path), ts)
             else:
@@ -90,6 +100,7 @@ class FrameExtractor:
                     raw_path.rename(frame_path)
                     logger.info(f"Screenshot captured: {frame_path}")
 
+                self._rotate_frames()
                 if on_frame:
                     await on_frame(str(frame_path), ts)
 
@@ -98,6 +109,12 @@ class FrameExtractor:
                 raw_path.unlink(missing_ok=True)
 
             await asyncio.sleep(self.interval)
+
+    def _rotate_frames(self):
+        frames = sorted(self.output_dir.glob("frame_*.jpg"))
+        if len(frames) > MAX_FRAMES_PER_STREAM:
+            for old in frames[:len(frames) - MAX_FRAMES_PER_STREAM]:
+                old.unlink(missing_ok=True)
 
     def stop(self):
         self._running = False

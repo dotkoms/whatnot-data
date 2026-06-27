@@ -27,16 +27,19 @@ class StreamWorker:
         browser_context,
         hash_index: HashIndex,
         auth_token: Optional[str] = None,
+        on_token_expired=None,
     ):
         self.stream_id = stream_id
         self.seller = seller
         self.stream_url = f"https://www.whatnot.com/live/{stream_id}"
         self.auth_token = auth_token
+        self._on_token_expired = on_token_expired
         self._context = browser_context
         self._hash_index = hash_index
         self._page = None
         self._running = False
         self._done = asyncio.Event()
+        self._browser_task: Optional[asyncio.Task] = None
 
     async def run(self):
         self._running = True
@@ -59,6 +62,8 @@ class StreamWorker:
             logger.info(f"[{stream_id}] Stream ended — shutting down worker")
             self._running = False
             extractor.stop()
+            if self._browser_task and not self._browser_task.done():
+                self._browser_task.cancel()
             self._done.set()
 
         client = PhoenixClient(
@@ -66,6 +71,7 @@ class StreamWorker:
             auth_token=self.auth_token,
             on_event=handler.handle,
             on_stream_end=on_stream_end,
+            on_token_expired=self._on_token_expired,
         )
 
         async def browser_task():
@@ -91,9 +97,10 @@ class StreamWorker:
                     await self._page.close()
 
         try:
+            self._browser_task = asyncio.ensure_future(browser_task())
             await asyncio.gather(
                 client.connect(),
-                browser_task(),
+                self._browser_task,
             )
         except Exception as e:
             logger.error(f"[{self.stream_id}] Worker error: {e}")

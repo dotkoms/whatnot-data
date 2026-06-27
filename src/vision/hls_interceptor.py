@@ -5,12 +5,9 @@ Run alongside the existing Playwright session.
 
 import asyncio
 import logging
-import re
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-
-IVS_PATTERN = re.compile(r"https://[^\"'\s]+\.m3u8[^\"'\s]*")
 
 
 class HLSInterceptor:

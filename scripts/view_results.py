@@ -36,6 +36,7 @@ def view(limit=20, card_filter=None):
         query += f" LIMIT {limit}"
 
     rows = conn.execute(query, params).fetchall()
+    total = conn.execute("SELECT COUNT(*) FROM auction_results").fetchone()[0] if not card_filter else len(rows)
     conn.close()
 
     if not rows:
@@ -53,12 +54,11 @@ def view(limit=20, card_filter=None):
         print(
             f"{ts:<20} {(row['card_name'] or 'Unknown')[:34]:<35} "
             f"{price:>8} {(row['buyer_username'] or '—')[:19]:<20} "
-            f"{row['bid_count']:>5} {conf:>6} {row['confidence'] and 'identified' or 'unmatched':<15}"
+            f"{row['bid_count']:>5} {conf:>6} {(row['confidence'] and 'identified' or 'unmatched'):<15}"
         )
 
-    total = conn.execute("SELECT COUNT(*) FROM auction_results").fetchone()[0] if not card_filter else len(rows)
     print(f"{'─'*100}")
-    print(f"Showing {len(rows)} results\n")
+    print(f"Showing {len(rows)} of {total} results\n")
 
 
 if __name__ == "__main__":

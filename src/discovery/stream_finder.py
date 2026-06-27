@@ -7,13 +7,18 @@ Filters for Pokemon card streams by category + title keywords.
 
 import asyncio
 import logging
-import re
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 EXPLORE_URL = "https://www.whatnot.com/explore"
-POKEMON_KEYWORDS = ["pokemon", "poke", "tcg", "cards", "charizard", "pikachu", "pack", "booster", "vintage"]
+POKEMON_KEYWORDS = [
+    "pokemon", "poke", "tcg", "cards", "charizard", "pikachu", "pack",
+    "booster", "vintage", "break", "pull", "ex", "gx", "vmax", "vstar",
+    "holo", "psa", "bgs", "graded", "sealed", "evolving", "obsidian",
+    "scarlet", "violet", "151", "jungle", "fossil", "base set",
+]
+NON_POKEMON_KEYWORDS = ["yugioh", "yu-gi-oh", "magic", "mtg", "sports", "baseball", "basketball", "football", "soccer", "nfl", "nba", "mlb"]
 POLL_INTERVAL = 60
 
 
@@ -32,7 +37,7 @@ class StreamFinder:
                 wait_until="domcontentloaded",
                 timeout=30000,
             )
-            await page.wait_for_timeout(3000)
+            await page.wait_for_timeout(1500)
 
             stream_links = await page.evaluate("""
                 () => {
@@ -57,13 +62,18 @@ class StreamFinder:
                     continue
                 seen.add(sid)
                 title = s.get("title", "").lower()
-                if any(kw in title for kw in POKEMON_KEYWORDS):
-                    streams.append({
-                        "stream_id": sid,
-                        "seller": s.get("seller") or "unknown",
-                        "url": s.get("url"),
-                        "title": s.get("title"),
-                    })
+                if any(kw in title for kw in NON_POKEMON_KEYWORDS):
+                    continue
+                is_pokemon = any(kw in title for kw in POKEMON_KEYWORDS)
+                streams.append({
+                    "stream_id": sid,
+                    "seller": s.get("seller") or "unknown",
+                    "url": s.get("url"),
+                    "title": s.get("title"),
+                    "priority": 1 if is_pokemon else 0,
+                })
+
+            streams.sort(key=lambda x: x["priority"], reverse=True)
 
             logger.info(f"StreamFinder: found {len(streams)} Pokemon streams")
 

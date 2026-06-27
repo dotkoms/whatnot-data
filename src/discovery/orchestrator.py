@@ -35,7 +35,6 @@ class Orchestrator:
         logger.info("Orchestrator starting")
 
         init_db()
-        self._hash_index.load(str(DB_PATH))
 
         await asyncio.gather(
             self._finder.poll(
@@ -63,6 +62,7 @@ class Orchestrator:
             browser_context=self._context,
             hash_index=self._hash_index,
             auth_token=self._auth_token,
+            on_token_expired=self._on_token_expired,
         )
         self._workers[stream_id] = worker
 
@@ -84,6 +84,14 @@ class Orchestrator:
                 logger.info(f"Cleaned up dead worker: {sid} | active={len(self._workers)}")
 
             logger.info(f"Active streams: {len(self._workers)}")
+
+    async def _on_token_expired(self):
+        logger.error(
+            "\n\n⚠️  WHATNOT AUTH TOKEN EXPIRED\n"
+            "   All WebSocket joins are being rejected.\n"
+            "   Run:  python scripts/intercept_ws.py\n"
+            "   Then restart this process.\n"
+        )
 
     async def add_stream(self, stream_id: str, seller: str = "unknown"):
         await self._on_new_stream({"stream_id": stream_id, "seller": seller, "title": ""})
