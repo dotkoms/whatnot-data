@@ -77,22 +77,38 @@ def init_db():
 
 
 def download_card_images(api_key: str = None, max_pages: int = None):
-    """Download all Pokemon cards from PokemonTCG.io and build hash index."""
+    """Download all Pokemon cards from PokemonTCG.io and build hash index.
+    Resumes automatically from where it left off (skips already-downloaded cards).
+    """
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     headers = {"X-Api-Key": api_key} if api_key else {}
     conn = get_db()
     page = 1
     page_size = 250
+    max_retries = 5
 
     while True:
         logger.info(f"Fetching page {page}...")
-        resp = requests.get(
-            f"{POKEMONTCG_API}/cards",
-            params={"page": page, "pageSize": page_size, "select": "id,name,set,number,images"},
-            headers=headers,
-            timeout=30,
-        )
-        resp.raise_for_status()
+
+        resp = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                resp = requests.get(
+                    f"{POKEMONTCG_API}/cards",
+                    params={"page": page, "pageSize": page_size, "select": "id,name,set,number,images"},
+                    headers=headers,
+                    timeout=60,
+                )
+                resp.raise_for_status()
+                break
+            except Exception as e:
+                logger.warning(f"Page {page} attempt {attempt}/{max_retries} failed: {e}")
+                if attempt == max_retries:
+                    logger.error(f"Giving up on page {page} after {max_retries} attempts")
+                    conn.close()
+                    return
+                time.sleep(2 ** attempt)
+
         data = resp.json()
         cards = data.get("data", [])
 
@@ -125,7 +141,8 @@ def download_card_images(api_key: str = None, max_pages: int = None):
             ))
 
         conn.commit()
-        logger.info(f"Page {page} done — {len(cards)} cards")
+        total = conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
+        logger.info(f"Page {page} done — {len(cards)} cards | total in DB: {total}")
 
         if max_pages and page >= max_pages:
             break
