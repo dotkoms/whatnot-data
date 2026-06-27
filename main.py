@@ -21,7 +21,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
 
-from src.vision.card_db import init_db
+from src.vision.card_db import init_db, DB_PATH
+from src.vision.hash_index import get_index
 from src.vision.frame_extractor import FrameExtractor
 from src.vision.hls_interceptor import HLSInterceptor
 from src.ws.event_handler import AuctionEventHandler
@@ -58,11 +59,14 @@ async def run(stream_url: str, seller: str):
     logger.info(f"Stream ID: {stream_id}")
 
     init_db()
+    index = get_index()
+    index.load(str(DB_PATH))
 
     handler = AuctionEventHandler(
         stream_url=stream_url,
         seller=seller,
         stream_id=stream_id,
+        hash_index=index,
     )
 
     extractor = FrameExtractor(stream_id=stream_id, interval=30)

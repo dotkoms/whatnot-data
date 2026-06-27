@@ -14,13 +14,16 @@ from typing import Optional
 import cv2
 import pytesseract
 
-from .card_db import find_card_by_hash, find_card_by_whatnot_image
 from .card_detector import detect_card, save_crop
+from .hash_index import HashIndex, get_index
 
 logger = logging.getLogger(__name__)
 
 
 class CardIdentifier:
+    def __init__(self, hash_index: Optional[HashIndex] = None):
+        self._index = hash_index or get_index()
+
     async def identify(
         self,
         frame_path: Optional[str] = None,
@@ -28,7 +31,7 @@ class CardIdentifier:
     ) -> Optional[dict]:
 
         if whatnot_image_key:
-            result = find_card_by_whatnot_image(whatnot_image_key)
+            result = self._index.find_from_whatnot_image(whatnot_image_key)
             if result:
                 result["method"] = "whatnot_image"
                 return result
@@ -38,7 +41,7 @@ class CardIdentifier:
             if crop is not None:
                 crop_path = save_crop(crop, frame_path)
 
-                result = find_card_by_hash(crop_path)
+                result = self._index.find(crop_path)
                 if result:
                     result["method"] = "phash"
                     result["crop_path"] = crop_path
@@ -53,9 +56,7 @@ class CardIdentifier:
         return None
 
     def _ocr_identify(self, crop_path: str) -> Optional[dict]:
-        """Use Tesseract OCR to read card name and number from the card image."""
         try:
-            import cv2
             img = cv2.imread(crop_path)
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
