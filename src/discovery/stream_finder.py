@@ -7,11 +7,12 @@ Filters for Pokemon card streams by category + title keywords.
 
 import asyncio
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-EXPLORE_URL = "https://www.whatnot.com/explore"
+TAG_URLS = [
+    "https://www.whatnot.com/tag/pokemon",
+]
 POKEMON_KEYWORDS = [
     "pokemon", "poke", "tcg", "cards", "charizard", "pikachu", "pack",
     "booster", "vintage", "break", "pull", "ex", "gx", "vmax", "vstar",
@@ -27,33 +28,41 @@ class StreamFinder:
         self._context = browser_context
         self._known_ids: set[str] = set()
 
+    async def _scrape_tag_page(self, page, url: str) -> list[dict]:
+        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        await page.wait_for_timeout(3000)
+        return await page.evaluate("""
+            () => {
+                const results = [];
+                const seen = new Set();
+                document.querySelectorAll('a[href*="/live/"]').forEach(a => {
+                    const href = a.href;
+                    const m = href.match(/\\/live\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+                    if (!m || seen.has(m[1])) return;
+                    seen.add(m[1]);
+                    const card = a.closest('[data-testid="livestream-card"]') || a.closest('[data-type="LivestreamCard"]') || a;
+                    const title = (card.innerText || card.textContent || '').toLowerCase().trim().split('\\n')[0];
+                    const img = card.querySelector('img');
+                    const seller = img ? (img.alt || '') : '';
+                    results.push({ stream_id: m[1], title, seller, url: href });
+                });
+                return results;
+            }
+        """)
+
     async def get_active_streams(self) -> list[dict]:
         streams = []
         page = None
         try:
             page = await self._context.new_page()
-            await page.goto(
-                f"{EXPLORE_URL}?category=trading-cards",
-                wait_until="domcontentloaded",
-                timeout=30000,
-            )
-            await page.wait_for_timeout(1500)
-
-            stream_links = await page.evaluate("""
-                () => {
-                    const results = [];
-                    document.querySelectorAll('a[href*="/live/"]').forEach(a => {
-                        const href = a.href;
-                        const match = href.match(/\\/live\\/([a-f0-9-]{36})/);
-                        if (!match) return;
-                        const stream_id = match[1];
-                        const title = (a.innerText || a.textContent || '').toLowerCase().trim();
-                        const seller = a.closest('[data-testid]')?.querySelector('img')?.alt || '';
-                        results.push({ stream_id, title, seller, url: href });
-                    });
-                    return results;
-                }
-            """)
+            all_links = []
+            for tag_url in TAG_URLS:
+                try:
+                    links = await self._scrape_tag_page(page, tag_url)
+                    all_links.extend(links)
+                except Exception as e:
+                    logger.warning(f"StreamFinder: error scraping {tag_url}: {e}")
+            stream_links = all_links
 
             seen = set()
             for s in stream_links:
